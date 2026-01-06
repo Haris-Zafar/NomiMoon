@@ -1,53 +1,84 @@
 /**
- * User Model
+ * User Model - Complete Explanation
  *
- * This is the core of our authentication system.
- *
- * KEY CONCEPTS:
- * 1. Password Hashing - Never store plain passwords
- * 2. Mongoose Middleware - Auto-hash passwords before saving
- * 3. Instance Methods - Methods available on user documents
- * 4. Indexes - For query performance
- * 5. Virtuals - Computed properties
- *
- * SECURITY PRINCIPLES:
- * - Passwords are hashed with bcrypt (one-way encryption)
- * - Passwords are never returned in queries (select: false)
- * - Email verification required before login
- * - Timestamps for auditing
+ * This model defines how user data is structured and secured.
  */
 
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import config from '../config/env.js';
 
+/**
+ * ============================================
+ * PART 1: SCHEMA DEFINITION
+ * ============================================
+ *
+ * A schema is like a blueprint that defines:
+ * - What fields exist
+ * - What type each field is
+ * - Validation rules
+ * - Default values
+ */
+
 const userSchema = new mongoose.Schema(
   {
-    // Basic Information
+    // ==========================================
+    // FIELD: email
+    // ==========================================
     email: {
+      // Type: What kind of data is stored
       type: String,
+
+      // Required: Field must be provided
+      // Can be boolean or array [boolean, errorMessage]
       required: [true, 'Email is required'],
+
+      // Unique: No two users can have same email
+      // This creates a database INDEX automatically
       unique: true,
-      lowercase: true, // Convert to lowercase
-      trim: true, // Remove whitespace
+
+      // Lowercase: Convert to lowercase before saving
+      // "John@GMAIL.com" → "john@gmail.com"
+      lowercase: true,
+
+      // Trim: Remove whitespace from start/end
+      // "  john@gmail.com  " → "john@gmail.com"
+      trim: true,
+
+      // Custom validation function
       validate: {
         validator: function (email) {
-          // Simple email regex validation
+          // Simple regex to check email format
           return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
         },
         message: 'Please provide a valid email address',
       },
-      index: true, // Create index for faster queries
     },
 
+    // ==========================================
+    // FIELD: password
+    // ==========================================
     password: {
       type: String,
-      required: [true, 'Password is required'],
+
+      // Conditional required: Only required if no googleId
+      // This allows Google OAuth users to not have passwords
+      required: function () {
+        return !this.googleId;
+      },
+
+      // Minimum length validation
       minlength: [8, 'Password must be at least 8 characters'],
-      select: false, // Never return password in queries by default
+
+      // SELECT: false means password is NEVER returned in queries
+      // This is CRITICAL for security!
+      // Even if you query User.find(), password won't be included
+      select: false,
     },
 
-    // Optional: User profile fields
+    // ==========================================
+    // PROFILE FIELDS (Optional)
+    // ==========================================
     firstName: {
       type: String,
       trim: true,
@@ -60,31 +91,37 @@ const userSchema = new mongoose.Schema(
       maxlength: [50, 'Last name cannot exceed 50 characters'],
     },
 
-    // Email Verification
+    // ==========================================
+    // EMAIL VERIFICATION FIELDS
+    // ==========================================
     isEmailVerified: {
       type: Boolean,
-      default: false,
+      default: false, // New users start unverified
     },
 
     emailVerifiedAt: {
       type: Date,
-      default: null,
+      default: null, // Null until verified
     },
 
-    // Security & Account Status
+    // ==========================================
+    // SECURITY FIELDS
+    // ==========================================
     isActive: {
       type: Boolean,
       default: true,
-      select: false, // Don't return in queries by default
+      select: false, // Hidden from queries
     },
 
-    // Password Management
     passwordChangedAt: {
       type: Date,
       select: false,
+      // Used to invalidate old JWTs after password change
     },
 
-    // Login tracking (optional but useful)
+    // ==========================================
+    // LOGIN TRACKING (Prevent Brute Force)
+    // ==========================================
     lastLoginAt: {
       type: Date,
     },
@@ -98,114 +135,154 @@ const userSchema = new mongoose.Schema(
     lockUntil: {
       type: Date,
       select: false,
+      // If user fails 5 login attempts, lock for 2 hours
     },
-    // Google OAuth fields
+
+    // ==========================================
+    // GOOGLE OAUTH FIELDS
+    // ==========================================
     googleId: {
       type: String,
       unique: true,
-      sparse: true, // Allows null values to be non-unique
+      sparse: true, // Allows multiple null values
       select: false,
+      // Sparse index: Only indexes non-null values
+      // Without sparse, only ONE user could have googleId=null
     },
 
     avatar: {
       type: String, // URL to profile picture
     },
-
-    // Also update the email validation to not require password for Google users
-    // Modify the password field:
-    password: {
-      type: String,
-      required: function () {
-        // Password only required if not a Google user
-        return !this.googleId;
-      },
-      minlength: [8, 'Password must be at least 8 characters'],
-      select: false,
-    },
   },
   {
-    timestamps: true, // Adds createdAt and updatedAt automatically
-    // Virtual properties
+    // ==========================================
+    // SCHEMA OPTIONS
+    // ==========================================
+
+    // Timestamps: Automatically adds createdAt and updatedAt
+    timestamps: true,
+
+    // Virtuals: Include virtual properties when converting to JSON/Object
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   }
 );
 
 /**
- * INDEXES
+ * ============================================
+ * PART 2: INDEXES
+ * ============================================
  *
- * Indexes improve query performance but slow down writes.
- * Create indexes for fields you frequently query.
+ * Indexes make queries faster but slow down writes.
+ *
+ * How indexes work:
+ * WITHOUT INDEX: MongoDB scans EVERY document (slow)
+ * WITH INDEX: MongoDB uses a sorted tree structure (fast)
+ *
+ * Example: Finding user by email
+ * No index: O(n) - checks all users
+ * With index: O(log n) - uses binary search
  */
-userSchema.index({ email: 1 }); // 1 = ascending
-userSchema.index({ createdAt: -1 }); // -1 = descending (newest first)
+
+// Sort users by creation date (newest first)
+userSchema.index({ createdAt: -1 }); // -1 = descending
 
 /**
- * VIRTUAL PROPERTIES
+ * ============================================
+ * PART 3: VIRTUAL PROPERTIES
+ * ============================================
  *
- * Computed properties that don't get stored in the database
+ * Virtual properties are NOT stored in database.
+ * They're computed on-the-fly when accessed.
+ *
+ * Why use virtuals?
+ * - Save database space
+ * - Keep data normalized (avoid duplication)
+ * - Dynamic values that depend on other fields
  */
+
 userSchema.virtual('fullName').get(function () {
+  // 'this' refers to the document
   if (this.firstName && this.lastName) {
     return `${this.firstName} ${this.lastName}`;
   }
   return this.firstName || this.lastName || '';
 });
 
+// Usage: user.fullName → "John Doe"
+// Not stored in DB, computed when accessed
+
 /**
- * MIDDLEWARE (HOOKS)
+ * ============================================
+ * PART 4: MIDDLEWARE (HOOKS)
+ * ============================================
  *
- * These run automatically at specific times
+ * Middleware runs automatically at specific times:
+ * - pre('save') → BEFORE saving to database
+ * - post('save') → AFTER saving to database
+ * - pre('find') → BEFORE querying
+ * - etc.
  */
 
 /**
- * PRE-SAVE MIDDLEWARE
+ * PRE-SAVE MIDDLEWARE: Hash Password
  *
- * This runs BEFORE saving a document to the database.
- * We use it to hash passwords automatically.
- *
- * IMPORTANT: Only hash if password is modified!
+ * This runs BEFORE user.save()
+ * Automatically hashes password so we never store plain text
  */
 userSchema.pre('save', async function (next) {
-  // Only hash the password if it has been modified (or is new)
+  // Only hash if password was modified
+  // Why? If user updates firstName, don't re-hash password!
   if (!this.isModified('password')) {
-    return next();
+    return next(); // Skip hashing, continue saving
   }
 
   try {
-    // Hash password with bcrypt
-    // Salt rounds = 12 (higher = more secure but slower)
+    // Generate salt (random data added to password)
+    // Salt rounds = 12 means hash 2^12 = 4096 times
+    // Higher = more secure but slower
     const salt = await bcrypt.genSalt(config.security.bcryptRounds);
+
+    // Hash password with salt
+    // "password123" → "$2a$12$kFQVHx.../..." (60 chars)
     this.password = await bcrypt.hash(this.password, salt);
 
-    // If password is being changed (not on creation), update passwordChangedAt
+    // If updating password (not creating new user)
     if (!this.isNew) {
-      // Subtract 1 second to ensure token is created after password change
+      // Set passwordChangedAt to invalidate old JWTs
       this.passwordChangedAt = Date.now() - 1000;
+      // Subtract 1 second to ensure JWT is created AFTER this
     }
 
-    next();
+    next(); // Continue with save
   } catch (error) {
-    next(error);
+    next(error); // Pass error to error handler
   }
 });
 
 /**
- * INSTANCE METHODS
+ * ============================================
+ * PART 5: INSTANCE METHODS
+ * ============================================
  *
- * These methods are available on individual user documents.
- * Example: user.comparePassword('password123')
+ * Instance methods are available on individual documents.
+ *
+ * Usage:
+ *   const user = await User.findOne({ email: 'john@example.com' });
+ *   const isValid = await user.comparePassword('password123');
+ *                          ↑ Instance method
  */
 
 /**
- * Compare provided password with hashed password in database
+ * Compare provided password with hashed password
  *
- * @param {string} candidatePassword - Plain text password from login
- * @returns {Promise<boolean>} - True if passwords match
+ * @param {string} candidatePassword - Plain text password
+ * @returns {Promise<boolean>} - True if match
  */
 userSchema.methods.comparePassword = async function (candidatePassword) {
   try {
-    // bcrypt.compare automatically handles the salt
+    // bcrypt.compare handles the salt automatically
+    // Hashes candidatePassword with same salt and compares
     return await bcrypt.compare(candidatePassword, this.password);
   } catch (error) {
     throw new Error('Password comparison failed');
@@ -213,44 +290,40 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
 };
 
 /**
- * Check if password was changed after a JWT was issued
+ * Check if password was changed after JWT was issued
  *
- * This is important for invalidating old tokens after password change.
+ * This invalidates old tokens after password change
  *
- * @param {number} JWTTimestamp - When the JWT was issued (in seconds)
- * @returns {boolean} - True if password was changed after JWT was issued
+ * @param {number} JWTTimestamp - When JWT was issued (seconds)
+ * @returns {boolean} - True if password changed after JWT
  */
 userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
   if (this.passwordChangedAt) {
-    // Convert passwordChangedAt to seconds (JWT timestamp is in seconds)
+    // Convert passwordChangedAt to seconds (JWT uses seconds)
     const changedTimestamp = parseInt(
       this.passwordChangedAt.getTime() / 1000,
       10
     );
-    // Return true if password was changed after JWT was issued
+
+    // If JWT was issued before password change, invalidate it
     return JWTTimestamp < changedTimestamp;
   }
-  // False means password has never been changed
-  return false;
+
+  return false; // Password never changed
 };
 
 /**
  * Check if account is locked due to failed login attempts
- *
- * @returns {boolean} - True if account is locked
  */
 userSchema.methods.isLocked = function () {
-  // Check if lockUntil is set and is in the future
   return !!(this.lockUntil && this.lockUntil > Date.now());
 };
 
 /**
- * Increment login attempts and lock account if threshold exceeded
- *
- * @returns {Promise<void>}
+ * Increment login attempts and lock if needed
  */
 userSchema.methods.incLoginAttempts = async function () {
-  // If we have a previous lock that has expired, restart at 1
+  // If previous lock expired, reset attempts
   if (this.lockUntil && this.lockUntil < Date.now()) {
     return this.updateOne({
       $set: { loginAttempts: 1 },
@@ -258,13 +331,11 @@ userSchema.methods.incLoginAttempts = async function () {
     });
   }
 
-  // Otherwise, increment login attempts
   const updates = { $inc: { loginAttempts: 1 } };
-
-  // Lock the account after 5 failed attempts (configurable)
   const MAX_LOGIN_ATTEMPTS = 5;
   const LOCK_TIME = 2 * 60 * 60 * 1000; // 2 hours
 
+  // Lock account after 5 failed attempts
   if (this.loginAttempts + 1 >= MAX_LOGIN_ATTEMPTS && !this.isLocked()) {
     updates.$set = { lockUntil: Date.now() + LOCK_TIME };
   }
@@ -274,8 +345,6 @@ userSchema.methods.incLoginAttempts = async function () {
 
 /**
  * Reset login attempts after successful login
- *
- * @returns {Promise<void>}
  */
 userSchema.methods.resetLoginAttempts = async function () {
   return this.updateOne({
@@ -285,76 +354,86 @@ userSchema.methods.resetLoginAttempts = async function () {
 };
 
 /**
- * STATIC METHODS
+ * ============================================
+ * PART 6: STATIC METHODS
+ * ============================================
  *
- * These methods are available on the Model itself.
- * Example: User.findByEmail('user@example.com')
+ * Static methods are available on the Model itself.
+ *
+ * Usage:
+ *   const user = await User.findByEmail('john@example.com');
+ *                     ↑ Static method on User Model
  */
 
 /**
- * Find user by email (useful for login)
- *
- * @param {string} email - User's email
- * @returns {Promise<Document|null>} - User document or null
+ * Find user by email (helper method)
  */
 userSchema.statics.findByEmail = function (email) {
   return this.findOne({ email: email.toLowerCase() });
 };
 
 /**
- * Get user with password (for authentication)
- *
- * @param {string} email - User's email
- * @returns {Promise<Document|null>} - User document with password or null
+ * Find user by email WITH password included
+ * (password is excluded by default due to select: false)
  */
 userSchema.statics.findByEmailWithPassword = function (email) {
   return this.findOne({ email: email.toLowerCase() }).select('+password');
 };
 
 /**
- * QUERY MIDDLEWARE
+ * ============================================
+ * PART 7: QUERY MIDDLEWARE
+ * ============================================
  *
- * Runs before/after queries
+ * Query middleware runs before/after database queries.
+ * Useful for filtering, logging, etc.
  */
 
-// Exclude inactive users from all find queries (soft delete pattern)
+/**
+ * Exclude inactive users from all find queries (soft delete)
+ *
+ * This means User.find() automatically filters out deleted users
+ */
 userSchema.pre(/^find/, function (next) {
-  // 'this' points to the current query
-  // Only show active users
+  // 'this' is the query object
   this.find({ isActive: { $ne: false } });
   next();
 });
 
 /**
- * Create and export the User model
+ * ============================================
+ * PART 8: CREATE MODEL
+ * ============================================
+ *
+ * Convert schema to Model
+ * Model = constructor for documents
  */
 const User = mongoose.model('User', userSchema);
 
 export default User;
 
 /**
- * USAGE EXAMPLES:
+ * ============================================
+ * USAGE EXAMPLES
+ * ============================================
  *
- * 1. Create a new user:
+ * 1. Create user:
  * ```
  * const user = await User.create({
- *   email: 'user@example.com',
- *   password: 'password123',
- *   firstName: 'John',
- *   lastName: 'Doe'
+ *   email: 'john@example.com',
+ *   password: 'password123', // Will be auto-hashed!
  * });
- * // Password is automatically hashed!
  * ```
  *
- * 2. Find user and compare password:
+ * 2. Find and verify password:
  * ```
- * const user = await User.findByEmailWithPassword('user@example.com');
- * const isMatch = await user.comparePassword('password123');
+ * const user = await User.findByEmailWithPassword('john@example.com');
+ * const isValid = await user.comparePassword('password123');
  * ```
  *
- * 3. Update user (password will be re-hashed):
+ * 3. Update user:
  * ```
- * user.password = 'newPassword123';
- * await user.save(); // pre-save hook runs automatically
+ * user.firstName = 'John';
+ * await user.save(); // Triggers pre-save hook
  * ```
  */

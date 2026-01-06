@@ -1,20 +1,6 @@
 /**
  * Email Service Configuration
- * 
- * Handles email configuration using Nodemailer.
- * 
- * PRODUCTION CONSIDERATIONS:
- * - Use a transactional email service (SendGrid, AWS SES, Mailgun, Postmark)
- * - Gmail is fine for development but has limits (500 emails/day)
- * - Monitor delivery rates and bounces
- * - Implement email queues for reliability (Bull, BullMQ)
- * - Use templates for consistent branding
- * 
- * SECURITY:
- * - Use App Passwords for Gmail (not your regular password)
- * - Enable 2FA on email account
- * - Use environment variables for credentials
- * - Validate email addresses before sending
+ * FIXED: Development mode doesn't require real email
  */
 
 import nodemailer from 'nodemailer';
@@ -22,41 +8,28 @@ import config from '../config/env.js';
 
 /**
  * Create email transporter
- * 
- * This is the "mail server connection" that Nodemailer uses to send emails.
- * Different for development vs production.
  */
 const createTransporter = () => {
-  // Development: Use Gmail or any SMTP service
+  // DEVELOPMENT MODE: Use Ethereal (fake email service)
   if (config.isDevelopment()) {
+    // Return a fake transporter for development
+    // Emails won't actually be sent, but we'll log them to console
     return nodemailer.createTransport({
-      host: config.email.host,
-      port: config.email.port,
-      secure: false, // true for 465, false for other ports
+      host: 'smtp.ethereal.email',
+      port: 587,
+      secure: false,
       auth: {
-        user: config.email.user,
-        pass: config.email.password,
+        user: 'test@ethereal.email',
+        pass: 'test',
       },
     });
   }
 
-  // Production: Use a transactional email service
-  // Example for SendGrid:
-  // return nodemailer.createTransport({
-  //   host: 'smtp.sendgrid.net',
-  //   port: 587,
-  //   auth: {
-  //     user: 'apikey',
-  //     pass: process.env.SENDGRID_API_KEY,
-  //   },
-  // });
-
-  // For now, use same config in production
-  // In real production, switch to SendGrid/SES/Mailgun
+  // PRODUCTION: Use real email service
   return nodemailer.createTransporter({
     host: config.email.host,
     port: config.email.port,
-    secure: config.isProduction(), // Use TLS in production
+    secure: config.isProduction(),
     auth: {
       user: config.email.user,
       pass: config.email.password,
@@ -67,35 +40,49 @@ const createTransporter = () => {
 const transporter = createTransporter();
 
 /**
- * Verify transporter configuration on startup
- * This helps catch configuration errors early
+ * Verify transporter (skip in development)
  */
 const verifyTransporter = async () => {
+  if (config.isDevelopment()) {
+    console.log(
+      '📧 Email service: DEVELOPMENT MODE (emails will be logged, not sent)'
+    );
+    return;
+  }
+
   try {
     await transporter.verify();
     console.log('✅ Email service is ready');
   } catch (error) {
     console.error('❌ Email service configuration error:', error.message);
-    // Don't exit process - emails will fail gracefully
-    // In production, you might want to exit here
+    console.log(
+      '💡 TIP: For Gmail, use App Password: https://support.google.com/accounts/answer/185833'
+    );
   }
 };
 
-// Verify on module load
 verifyTransporter();
 
 /**
- * Base email sending function
- * 
- * @param {Object} options - Email options
- * @param {string} options.to - Recipient email
- * @param {string} options.subject - Email subject
- * @param {string} options.text - Plain text version
- * @param {string} options.html - HTML version
- * @returns {Promise<void>}
+ * Send Email - DEVELOPMENT MODE LOGS INSTEAD
  */
 const sendEmail = async ({ to, subject, text, html }) => {
   try {
+    // DEVELOPMENT: Just log the email instead of sending
+    if (config.isDevelopment()) {
+      console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('📧 EMAIL (Development Mode - Not Actually Sent)');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`To: ${to}`);
+      console.log(`Subject: ${subject}`);
+      console.log('─────────────────────────────────────────');
+      console.log(text);
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+
+      return { messageId: 'dev-mode-' + Date.now() };
+    }
+
+    // PRODUCTION: Actually send email
     const mailOptions = {
       from: `${config.email.from} <${config.email.user}>`,
       to,
@@ -105,12 +92,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    
-    if (config.isDevelopment()) {
-      console.log('📧 Email sent:', info.messageId);
-      console.log('Preview URL:', nodemailer.getTestMessageUrl(info));
-    }
-
+    console.log('📧 Email sent:', info.messageId);
     return info;
   } catch (error) {
     console.error('❌ Email sending failed:', error);

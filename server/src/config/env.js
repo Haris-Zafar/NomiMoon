@@ -1,28 +1,14 @@
-/**
- * Environment Configuration Module
- *
- * This module centralizes all environment variable access and validation.
- * Benefits:
- * - Single source of truth for configuration
- * - Validates required variables at startup
- * - Provides type-safe access to config values
- * - Makes it easy to add new config values
- */
-
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-// ES Module equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables from .env file
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 /**
- * Validates that all required environment variables are present
- * This fails fast at startup rather than later at runtime
+ * Validates required environment variables
  */
 const validateEnv = () => {
   const required = [
@@ -46,13 +32,8 @@ const validateEnv = () => {
   }
 };
 
-// Run validation at module load time
 validateEnv();
 
-/**
- * Configuration object with typed values
- * All config should be accessed through this object
- */
 const config = {
   // Server
   env: process.env.NODE_ENV || 'development',
@@ -62,10 +43,6 @@ const config = {
   // Database
   database: {
     uri: process.env.MONGODB_URI,
-    options: {
-      // Modern Mongoose doesn't need most options anymore
-      // These are set for clarity
-    },
   },
 
   // JWT
@@ -95,9 +72,14 @@ const config = {
   // Security
   security: {
     bcryptRounds: parseInt(process.env.BCRYPT_SALT_ROUNDS, 10) || 12,
-    rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000, // 15 min
+    rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000,
     rateLimitMaxRequests:
       parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
+  },
+
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
   },
 
   // Helper methods

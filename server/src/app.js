@@ -1,9 +1,6 @@
 /**
  * Express Application Setup
- *
- * This file configures the Express app with all necessary middleware.
- * Keep this file clean - only middleware and route mounting here.
- * No business logic should be in this file.
+ * FIXED: Stricter rate limiting for easier testing
  */
 
 import express from 'express';
@@ -19,47 +16,62 @@ const app = express();
 /**
  * SECURITY MIDDLEWARE
  */
-
-// Helmet sets various HTTP headers for security
-// https://helmetjs.github.io/
 app.use(helmet());
 
-// CORS configuration
-// In production, you should whitelist specific origins
 app.use(
   cors({
     origin: config.clientUrl,
-    credentials: true, // Allow cookies
+    credentials: true,
   })
 );
 
-// Rate limiting to prevent brute force attacks
-// This applies to ALL routes - you can create specific limiters for auth routes
+/**
+ * RATE LIMITING - FIXED WITH STRICTER SETTINGS
+ * For development: 10 requests per minute (easy to test)
+ * For production: 100 requests per 15 minutes
+ */
 const limiter = rateLimit({
-  windowMs: config.security.rateLimitWindowMs, // 15 minutes
-  max: config.security.rateLimitMaxRequests, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  windowMs: config.isDevelopment()
+    ? 60 * 1000
+    : config.security.rateLimitWindowMs,
+  max: config.isDevelopment() ? 10 : config.security.rateLimitMaxRequests,
+  message: {
+    status: 'error',
+    message: 'Too many requests from this IP, please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip successful requests (only count failed ones for auth routes)
+  skipSuccessfulRequests: false,
+  // Skip certain requests (like health checks in production)
+  skip: (req) => {
+    // Don't rate limit health checks in development
+    return config.isDevelopment() && req.path === '/health';
+  },
+  handler: (req, res) => {
+    console.log(`⚠️  Rate limit exceeded for IP: ${req.ip}`);
+    res.status(429).json({
+      status: 'error',
+      message: 'Too many requests. Please try again later.',
+      retryAfter: Math.ceil(req.rateLimit.resetTime / 1000),
+    });
+  },
 });
 
+// Apply rate limiting to all API routes
 app.use('/api/', limiter);
 
 /**
  * BODY PARSING MIDDLEWARE
  */
-
-// Parse JSON bodies (as sent by API clients)
-app.use(express.json({ limit: '10kb' })); // Limit body size for security
-
-// Parse URL-encoded bodies (as sent by HTML forms)
+app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
 /**
  * ROUTES
  */
 
-// Health check endpoint (useful for monitoring/load balancers)
+// Health check (no rate limit in dev, has rate limit in prod)
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'success',
@@ -69,21 +81,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// API routes will be mounted here
-// Example: app.use('/api/auth', authRoutes);
-// We'll add these in the next chunk when we create the routes
+// Auth routes (rate limited)
 app.use('/api/auth', authRoutes);
 
 /**
  * ERROR HANDLING
  */
-
-// Handle 404 errors for undefined routes
-// This must come AFTER all other routes
 app.use(notFoundHandler);
-
-// Global error handler
-// This must be the LAST middleware
 app.use(errorHandler);
 
 export default app;
